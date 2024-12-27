@@ -1,66 +1,114 @@
 use windows::Win32::{
-    Foundation::{HWND},
+    Foundation::{BOOL, HWND, LPARAM},
     UI::WindowsAndMessaging::{
-        SetForegroundWindow, ShowWindow, SW_RESTORE, BringWindowToTop, SwitchToThisWindow,
-        GetForegroundWindow, GetWindowThreadProcessId, SetWindowPos, HWND_TOPMOST, SWP_NOMOVE, SWP_NOSIZE, SWP_SHOWWINDOW,
+        EnumWindows, GetWindowTextA, GetWindowTextLengthA, IsWindowVisible, ShowWindow,
+        SW_HIDE, SW_SHOW, SetForegroundWindow, SW_RESTORE,
     },
-    System::Threading::{AttachThreadInput, GetCurrentThreadId},
 };
 
 fn main() {
+    let title_suffix = "Obsidian v1.7.7"; // Sufijo exacto del título a buscar
+
     unsafe {
-        // Reemplaza el valor con el HWND correcto
-        let hwnd = HWND(0x40756 as *mut _); // HWND de la ventana objetivo
-        if force_foreground_window(hwnd) {
-            println!("Ventana colocada en primer plano y superpuesta con éxito.");
-        } else {
-            println!("No se pudo colocar la ventana en primer plano y superponerla.");
+        match find_window_by_suffix(title_suffix) {
+            Some((hwnd, is_visible)) => {
+                println!(
+                    "Ventana encontrada: HWND: {:?}, Visible: {}",
+                    hwnd.0, is_visible
+                );
+                if bring_window_to_foreground(hwnd) {
+                    println!("Ventana colocada en primer plano y superpuesta con éxito.");
+                } else {
+                    println!("No se pudo colocar la ventana en primer plano y superponerla.");
+                }
+            }
+            None => {
+                println!(
+                    "No se encontró ninguna ventana cuyo título termine con '{}'.",
+                    title_suffix
+                );
+                println!("=== Lista de Ventanas Visibles y Ocultas ===");
+                list_all_windows();
+                println!("=== Fin de la lista ===");
+            }
         }
     }
 }
 
-/// Fuerza que una ventana se coloque en primer plano utilizando AttachThreadInput, BringWindowToTop y SetWindowPos.
-unsafe fn force_foreground_window(hwnd: HWND) -> bool {
-    let foreground_window = GetForegroundWindow();
-    if foreground_window.0 == std::ptr::null_mut() {
-        return false;
+/// Lista todas las ventanas visibles y ocultas en el sistema.
+unsafe fn list_all_windows() {
+    EnumWindows(Some(enum_windows_proc), LPARAM(0));
+
+    extern "system" fn enum_windows_proc(hwnd: HWND, _: LPARAM) -> BOOL {
+        unsafe {
+            let length = GetWindowTextLengthA(hwnd) as usize;
+            if length > 0 {
+                let mut buffer = vec![0u8; length + 1]; // +1 para el carácter nulo
+
+                if GetWindowTextA(hwnd, &mut buffer) > 0 {
+                    let window_title = String::from_utf8_lossy(&buffer).trim_end_matches('\0').to_string();
+                    let is_visible = IsWindowVisible(hwnd).as_bool();
+
+                    println!(
+                        "HWND: {:?}, Título: \"{}\", Visible: {}",
+                        hwnd.0, window_title, is_visible
+                    );
+                }
+            }
+            BOOL(1) // Continuar con la siguiente ventana
+        }
+    }
+}
+
+/// Busca una ventana cuyo título termina con `title_suffix` y devuelve su HWND y visibilidad.
+unsafe fn find_window_by_suffix(title_suffix: &str) -> Option<(HWND, bool)> {
+    let mut result: Option<(HWND, bool)> = None;
+
+    let callback_data = (&mut result as *mut _, title_suffix as *const _);
+    EnumWindows(Some(enum_windows_proc_find), LPARAM(&callback_data as *const _ as isize));
+
+    result
+}
+
+unsafe extern "system" fn enum_windows_proc_find(hwnd: HWND, lparam: LPARAM) -> BOOL {
+    let (result_ptr, suffix_ptr): (*mut Option<(HWND, bool)>, &str) =
+        *(lparam.0 as *const (*mut Option<(HWND, bool)>, &str));
+
+    let length = GetWindowTextLengthA(hwnd) as usize;
+    if length > 0 {
+        let mut buffer = vec![0u8; length + 1]; // +1 para el carácter nulo
+
+        if GetWindowTextA(hwnd, &mut buffer) > 0 {
+            let window_title = String::from_utf8_lossy(&buffer).trim_end_matches('\0').to_string();
+
+            let suffix = suffix_ptr;
+
+            if window_title.ends_with(suffix) {
+                let is_visible = IsWindowVisible(hwnd).as_bool();
+                *result_ptr = Some((hwnd, is_visible));
+                return BOOL(0); // Detener la enumeración
+            }
+        }
     }
 
-    let current_thread_id = GetCurrentThreadId();
-    let foreground_thread_id = GetWindowThreadProcessId(foreground_window, Some(std::ptr::null_mut()));
+    BOOL(1) // Continuar con la siguiente ventana
+}
 
-    // Conectar los hilos de entrada
-    let _ = AttachThreadInput(foreground_thread_id, current_thread_id, true);
-
-    // Restaurar la ventana si está minimizada
-    let _ = ShowWindow(hwnd, SW_RESTORE);
-
-    // Intentar colocar la ventana en primer plano
-    let result = SetForegroundWindow(hwnd).as_bool();
-
-    if !result {
-        println!("Intentando BringWindowToTop...");
-        let _ = BringWindowToTop(hwnd);
-        println!("Intentando SwitchToThisWindow...");
-        let _ = SwitchToThisWindow(hwnd, true);
-    }
-
-    // Desconectar los hilos de entrada
-    let _ = AttachThreadInput(foreground_thread_id, current_thread_id, false);
-
-    if !result {
-        println!("Forzando la ventana al frente con SetWindowPos...");
-        SetWindowPos(
-            hwnd,
-            HWND_TOPMOST,
-            0,
-            0,
-            0,
-            0,
-            SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW,
-        )
-            .is_ok() // Verifica si SetWindowPos fue exitoso
+/// Alterna la visibilidad de una ventana (ocultar si está visible, mostrar y superponer si está oculta).
+unsafe fn toggle_window_visibility(hwnd: HWND) -> bool {
+    if IsWindowVisible(hwnd).as_bool() {
+        println!("La ventana está visible. Ocultándola...");
+        ShowWindow(hwnd, SW_HIDE).as_bool()
     } else {
-        result
+        println!("La ventana está oculta. Mostrándola y colocándola en primer plano...");
+        bring_window_to_foreground(hwnd)
     }
+}
+
+/// Coloca una ventana en primer plano y la restaura si está minimizada.
+unsafe fn bring_window_to_foreground(hwnd: HWND) -> bool {
+    // Restaurar la ventana si está minimizada
+    ShowWindow(hwnd, SW_RESTORE);
+    // Intentar colocar la ventana en primer plano
+    SetForegroundWindow(hwnd).as_bool()
 }
