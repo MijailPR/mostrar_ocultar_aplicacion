@@ -3,7 +3,7 @@ use windows::Win32::{
     Foundation::{BOOL, HWND, LPARAM},
     UI::WindowsAndMessaging::{
         EnumWindows, GetWindowTextA, GetWindowTextLengthA, IsWindowVisible, ShowWindow,
-        SW_HIDE, SetForegroundWindow, SW_RESTORE, BringWindowToTop, SetWindowPos,
+        SW_HIDE, SetForegroundWindow, SW_RESTORE, SW_MAXIMIZE, BringWindowToTop, SetWindowPos,
         HWND_TOPMOST, SWP_NOMOVE, SWP_NOSIZE, SWP_SHOWWINDOW, GetForegroundWindow, GetWindowThreadProcessId,
     },
     System::Threading::{AttachThreadInput, GetCurrentThreadId},
@@ -106,7 +106,7 @@ unsafe fn toggle_window_visibility(hwnd: HWND) -> bool {
         println!("La ventana está oculta. Intentando mostrarla...");
 
         let start_time = Instant::now();
-        ShowWindow(hwnd, SW_RESTORE); // Intentar restaurar la ventana sin evaluar el resultado inmediato
+        let _ = ShowWindow(hwnd, SW_RESTORE); // Intentar restaurar la ventana sin evaluar el resultado inmediato
 
         println!("Esperando que la ventana se vuelva visible...");
         while !IsWindowVisible(hwnd).as_bool() {
@@ -121,9 +121,11 @@ unsafe fn toggle_window_visibility(hwnd: HWND) -> bool {
         if IsWindowVisible(hwnd).as_bool() {
             let elapsed = start_time.elapsed();
             println!(
-                "La ventana ahora está visible después de {:.2?} segundos. Intentando superponer...",
+                "La ventana ahora está visible después de {:.2?} segundos. Intentando maximizar...",
                 elapsed
             );
+
+            let _ = ShowWindow(hwnd, SW_MAXIMIZE); // Maximizar la ventana
 
             let foreground_window = GetForegroundWindow();
             let current_thread_id = GetCurrentThreadId();
@@ -136,7 +138,7 @@ unsafe fn toggle_window_visibility(hwnd: HWND) -> bool {
             let _ = AttachThreadInput(foreground_thread_id, current_thread_id, false);
 
             if set_foreground_result {
-                println!("La ventana fue superpuesta con éxito.");
+                println!("La ventana fue superpuesta y maximizada con éxito.");
                 return true;
             } else {
                 println!("El intento de superponer la ventana falló. Intentando métodos alternativos...");
