@@ -5,3 +5,11 @@ edition = "2021"
 
 [dependencies]
 windows = { version = "0.58.0", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_System_Threading"] }
+
+
+[profile.release]
+lto = "thin"           # Habilita optimización por tiempo de enlace
+codegen-units = 1      # Maximiza la optimización en un solo hilo
+panic = "abort"        # Reduce el tamaño al manejar pánicos
+opt-level = 3        # Máxima optimización para velocidad
+strip = true           # Elimina símbolos innecesarios (en plataformas compatibles)
